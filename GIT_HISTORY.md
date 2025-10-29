@@ -1,4 +1,4 @@
-# Simulated Git Commit History
+#Git Commit History
 
 This file contains a sample sequence of commits demonstrating a realistic development flow.
 
