@@ -2,7 +2,7 @@ import axios from "axios";
 
 const API_BASE = "https://api.github.com";
 
-const token = "";
+const token = import.meta.env.ACCESS_GITHUB_TOKEN;
 
 const client = axios.create({
   baseURL: API_BASE,

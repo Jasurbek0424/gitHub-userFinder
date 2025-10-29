@@ -32,7 +32,6 @@ const initialState: GithubState = {
   username: null,
 };
 
-
 function reducer(state: GithubState, action: Action): GithubState {
   switch (action.type) {
     case "SET_USERNAME":
@@ -72,8 +71,8 @@ export const GithubProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
   const [state, dispatch] = useReducer(reducer, initialState); //@ts-ignore
-  const cancelSourceRef = useRef<Axios.CancelTokenSource | null>(null); //@ts-ignore
-  const reposCancelRef = useRef<Axios.CancelTokenSource | null>(null); 
+  const cancelSourceRef = useRef<axios.CancelTokenSource | null>(null); //@ts-ignore
+  const reposCancelRef = useRef<axios.CancelTokenSource | null>(null);
 
   const searchUser = useCallback(async (username: string) => {
     cancelSourceRef.current?.cancel("New user search"); //@ts-ignore
@@ -87,9 +86,10 @@ export const GithubProvider: React.FC<{ children: React.ReactNode }> = ({
       const cacheKeyUser = `user_${username}`;
       const cachedUser = getCache<any>(cacheKeyUser);
       let user: GitHubUser;
+
       if (cachedUser) user = cachedUser;
       else {
-        user = await fetchUser(username, cancelSourceRef.current.token);
+        user = await fetchUser(username, { cancelToken: cancelSourceRef.current.token });
         setCache(cacheKeyUser, user);
       }
 
@@ -103,17 +103,27 @@ export const GithubProvider: React.FC<{ children: React.ReactNode }> = ({
       const cachedRepos = getCache<any>(cacheKeyRepos);
       let repos =
         cachedRepos ??
-        (await fetchRepos(username, 1, 30, reposCancelRef.current.token));
+        (await fetchRepos(username, 1, 30, { cancelToken: reposCancelRef.current.token }));
       if (!cachedRepos) setCache(cacheKeyRepos, repos);
 
       dispatch({ type: "SET_REPOS", repos, append: false });
       dispatch({ type: "SET_HAS_MORE", hasMore: repos.length === 30 });
     } catch (err: any) { //@ts-ignore
       if (axios.isCancel(err)) return;
-      dispatch({
-        type: "SET_ERROR",
-        error: err?.response?.data?.message || err.message || "Unknown error",
-      });
+
+      let message = "Something went wrong, please try again.";
+      //@ts-ignore
+      if (axios.isAxiosError(err)) {
+        if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
+          message = "Something went wrong, check your network connection.";
+        } else if (err.response?.status === 403) {
+          message = "GitHub API rate limit reached. Please try again later.";
+        } else if (err.response?.status === 404) {
+          message = "User not found.";
+        }
+      }
+
+      dispatch({ type: "SET_ERROR", error: message });
       dispatch({ type: "SET_USER", user: null });
       dispatch({ type: "SET_REPOS", repos: [], append: false });
       dispatch({ type: "SET_HAS_MORE", hasMore: false });
@@ -124,26 +134,20 @@ export const GithubProvider: React.FC<{ children: React.ReactNode }> = ({
 
   const loadMoreRepos = useCallback(async () => {
     const username = state.username;
-    if (!username) return;
-    if (state.loadingRepos) return;
-    if (!state.hasMoreRepos) return;
+    if (!username || state.loadingRepos || !state.hasMoreRepos) return;
 
     reposCancelRef.current?.cancel("Load more repos"); //@ts-ignore
     reposCancelRef.current = axios.CancelToken.source();
 
     const nextPage = state.page + 1;
     dispatch({ type: "SET_LOADING_REPOS", v: true });
+
     try {
       const cacheKey = `repos_${username}_page_${nextPage}`;
       const cached = getCache<any>(cacheKey);
       let repos =
         cached ??
-        (await fetchRepos(
-          username,
-          nextPage,
-          30,
-          reposCancelRef.current.token
-        ));
+        (await fetchRepos(username, nextPage, 30, { cancelToken: reposCancelRef.current.token }));
       if (!cached) setCache(cacheKey, repos);
 
       dispatch({ type: "SET_REPOS", repos, append: true });
@@ -151,10 +155,17 @@ export const GithubProvider: React.FC<{ children: React.ReactNode }> = ({
       dispatch({ type: "SET_HAS_MORE", hasMore: repos.length === 30 });
     } catch (err: any) { //@ts-ignore
       if (axios.isCancel(err)) return;
-      dispatch({
-        type: "SET_ERROR",
-        error: err?.response?.data?.message || err.message || "Unknown error",
-      });
+      
+      let message = "Something went wrong, please try again."; //@ts-ignore
+      if (axios.isAxiosError(err)) {
+        if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
+          message = "Something went wrong, check your network connection.";
+        } else if (err.response?.status === 403) {
+          message = "GitHub API rate limit reached. Please try again later.";
+        }
+      }
+
+      dispatch({ type: "SET_ERROR", error: message });
     } finally {
       dispatch({ type: "SET_LOADING_REPOS", v: false });
     }
@@ -174,7 +185,7 @@ export const GithubProvider: React.FC<{ children: React.ReactNode }> = ({
 };
 
 export const useGithub = () => {
-  const ctx = React.useContext(GithubContext);
+  const ctx = useContext(GithubContext);
   if (!ctx) throw new Error("useGithub must be used inside GithubProvider");
   return ctx;
 };
